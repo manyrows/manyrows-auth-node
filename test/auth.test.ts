@@ -28,12 +28,17 @@ async function signToken(opts: {
   exp?: number;
   alg?: string;
   aud?: string;
+  iss?: string;
 } = {}): Promise<string> {
   const sub = opts.sub ?? "user_xyz";
+  // iss defaults to the verifyOpts.baseURL so tokens round-trip
+  // through the SDK's iss validation. Tests that want to exercise
+  // the iss-mismatch path pass a different value explicitly.
   return await new SignJWT({})
     .setProtectedHeader({ alg: opts.alg ?? "ES256", kid })
     .setIssuedAt()
     .setSubject(sub)
+    .setIssuer(opts.iss ?? "https://app.manyrows.com")
     .setAudience(opts.aud ?? "app_123")
     .setExpirationTime(opts.exp ?? "5m")
     .sign(key.privateKey);
@@ -200,6 +205,43 @@ describe("verifyToken (local JWKS)", () => {
       .setExpirationTime("5m")
       .sign(key.privateKey);
     const id = await verifyToken(tok, { ...verifyOpts, fetch: jwksFetch() });
+    expect(id).toBeNull();
+  });
+
+  it("returns null when iss does not match the configured baseURL", async () => {
+    const tok = await signToken({ iss: "https://other-install.example.com" });
+    const id = await verifyToken(tok, { ...verifyOpts, fetch: jwksFetch() });
+    expect(id).toBeNull();
+  });
+
+  it("tolerates trailing slash on either side of iss", async () => {
+    const tok = await signToken({ iss: "https://app.manyrows.com/" });
+    const id = await verifyToken(tok, { ...verifyOpts, fetch: jwksFetch() });
+    expect(id).toBe("user_xyz");
+  });
+
+  it("throws on plain-http baseURL (non-localhost)", async () => {
+    await expect(
+      verifyToken("any.token.value", {
+        baseURL: "http://app.example.com",
+        workspaceSlug: "acme",
+        appId: "app_123",
+        fetch: jwksFetch(),
+      }),
+    ).rejects.toThrow(/https/);
+  });
+
+  it("allows http://localhost for dev loops", async () => {
+    // Should not throw the requireSecureBaseURL error. Verification
+    // will still fail because the JWKS fetch hits the mock 404 path
+    // for the localhost URL, but that's a different failure mode (no
+    // throw, just null) — confirming the URL check passes.
+    const id = await verifyToken("any.token.value", {
+      baseURL: "http://localhost:8080",
+      workspaceSlug: "acme",
+      appId: "app_123",
+      fetch: jwksFetch(),
+    });
     expect(id).toBeNull();
   });
 });

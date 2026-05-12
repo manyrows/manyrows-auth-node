@@ -11,6 +11,42 @@ import { createRemoteJWKSet, customFetch, jwtVerify, type JWTVerifyGetKey } from
 
 const USER_AGENT = "manyrows-node-auth/1.0";
 
+// jwksCacheMaxAgeMs aligns the SDK's JWKS cache lifetime with the
+// other-language SDKs (manyrows-go / manyrows-python / manyrows-java)
+// at ~10 minutes. It also happens to match jose's own default, but
+// we set it explicitly so a future jose version that changes the
+// default doesn't surprise an operator who relied on rotation timing.
+const jwksCacheMaxAgeMs = 10 * 60 * 1000;
+
+/**
+ * Reject baseURLs that would make JWKS fetches MITM-able. Only
+ * https:// is accepted, with the usual localhost / 127.0.0.1 / [::1]
+ * dev exceptions so local round-trips don't force operators into
+ * self-signed cert dances. Throws synchronously so a misconfigured
+ * deploy fails at boot rather than at first request.
+ */
+function requireSecureBaseURL(raw: string): void {
+  const s = raw.trim().toLowerCase();
+  if (!s) throw new Error("manyrows-node auth: baseURL is empty");
+  if (s.startsWith("https://")) return;
+  if (
+    s.startsWith("http://localhost") ||
+    s.startsWith("http://127.0.0.1") ||
+    s.startsWith("http://[::1]")
+  ) return;
+  throw new Error(
+    `manyrows-node auth: baseURL must use https:// (got ${JSON.stringify(raw)}) — refusing to fetch JWKS over plaintext`,
+  );
+}
+
+// issMatches normalises trailing slashes on either side before
+// comparing — the server may or may not emit a trailing slash on
+// iss; operators shouldn't have to think about it.
+function issMatches(claim: unknown, expected: string): boolean {
+  if (typeof claim !== "string") return false;
+  return claim.replace(/\/+$/, "") === expected.replace(/\/+$/, "");
+}
+
 // Cookie name is per-app — "mr_at_<appId>" — so two ManyRows apps on
 // the same eTLD don't share one cookie slot in the browser jar.
 // Mirrors manyrows-core's clientauth.AccessCookieName(appID). Keep in
@@ -48,7 +84,12 @@ function getJWKS(baseURL: string, fetchImpl?: typeof fetch): JWTVerifyGetKey {
   const cacheKey = fetchImpl ? `${url}::custom` : url;
   let getter = jwksCache.get(cacheKey);
   if (!getter) {
-    const opts = fetchImpl ? { [customFetch]: fetchImpl } : undefined;
+    const opts: Parameters<typeof createRemoteJWKSet>[1] = {
+      cacheMaxAge: jwksCacheMaxAgeMs,
+    };
+    if (fetchImpl) {
+      (opts as Record<string | symbol, unknown>)[customFetch] = fetchImpl;
+    }
     getter = createRemoteJWKSet(new URL(url), opts);
     jwksCache.set(cacheKey, getter);
   }
@@ -73,6 +114,7 @@ export async function verifyToken(
   opts: VerifyOptions,
 ): Promise<string | null> {
   if (!token) return null;
+  requireSecureBaseURL(opts.baseURL);
   try {
     // `audience: opts.appId` enforces that the token's aud claim
     // contains this app's ID — jose accepts both string and string[]
@@ -83,6 +125,15 @@ export async function verifyToken(
       clockTolerance: 60,
       audience: opts.appId,
     });
+    // iss check: defence-in-depth against cross-install token replay.
+    // The signature already binds the token to the install (signed
+    // with the install's private key), but if a signing key were ever
+    // shared across deployments — operator error, or a future
+    // "promoted from staging" migration — this catch surfaces it
+    // instead of silently accepting.
+    if (!issMatches(payload.iss, opts.baseURL.replace(/\/+$/, ""))) {
+      return null;
+    }
     const sub = payload.sub;
     return typeof sub === "string" && sub.length > 0 ? sub : null;
   } catch {
@@ -190,6 +241,9 @@ type NextFn = (err?: unknown) => void;
  *   }));
  */
 export function expressMiddleware(opts: ExpressMiddlewareOptions) {
+  // Surface a misconfigured baseURL synchronously at middleware build
+  // time so the deploy fails fast rather than at first request.
+  requireSecureBaseURL(opts.baseURL);
   return async (req: ReqLike & AuthenticatedRequest, res: ResLike, next: NextFn): Promise<void> => {
     const token =
       bearerToken(req.headers["authorization"] ?? req.headers["Authorization"]) ??
