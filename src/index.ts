@@ -1,19 +1,37 @@
 // Public surface of @manyrows/manyrows-node.
 
-export { Client, ManyRowsError } from "./client.js";
+export { ManyRowsServer, ManyRowsServerError } from "./client.js";
 export type {
-  ClientOptions,
-  ConfigItem,
-  FeatureFlag,
-  Delivery,
-  PermissionResult,
-  Member,
-  MembersResult,
-  ListMembersOptions,
+  ManyRowsServerOptions,
+  UserSource,
   User,
   UserFieldValue,
-  UserResult,
+  ServerUser,
+  Member,
+  MembersList,
+  CheckPermissionResult,
+  RoleSummary,
+  PermissionSummary,
+  CreateUserInput,
+  CreateUserResult,
+  BatchUserResult,
+  AppUserStatus,
+  UserStatusResult,
+  RemoveUserResult,
+  MagicLinkResult,
+  Session,
+  AuthLogEntry,
+  AuthLogsPage,
+  Identity,
+  Passkey,
+  Webhook,
+  ConfigKey,
+  FeatureFlag,
+  FeatureFlagOverride,
   UserField,
+  DeliveryConfigItem,
+  DeliveryFlagItem,
+  Delivery,
 } from "./client.js";
 
 export { verifyToken, bearerToken, mrAtCookie, expressMiddleware } from "./auth.js";

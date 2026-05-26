@@ -1,193 +1,97 @@
-import { describe, it, expect, vi } from "vitest";
-import { Client, ManyRowsError } from "../src/index.js";
+import { describe, it, expect } from "vitest";
+import { ManyRowsServer, ManyRowsServerError } from "../src/index.js";
 
-type MockReply =
-  | { body: unknown; status?: number; ok?: boolean }
-  | { error: Error };
-
-function mockFetch(replies: MockReply[]): typeof fetch {
-  let i = 0;
-  return vi.fn(async (url: any) => {
-    const r = replies[Math.min(i++, replies.length - 1)]!;
-    if ("error" in r) throw r.error;
-    const status = r.status ?? 200;
-    return {
-      ok: status >= 200 && status < 300,
-      status,
-      statusText: status === 200 ? "OK" : "Error",
-      url: String(url),
-      text: async () => (typeof r.body === "string" ? r.body : JSON.stringify(r.body)),
-      json: async () => r.body,
-    } as unknown as Response;
-  }) as unknown as typeof fetch;
+interface MockCall {
+  url: string;
+  init: RequestInit;
 }
 
-const baseOpts = {
-  baseURL: "https://app.manyrows.com",
-  workspaceSlug: "acme",
-  appId: "app_123",
-  apiKey: "mr_test_key",
-};
+function mockFetch(handler: (url: string, init: RequestInit) => Response): {
+  fn: typeof fetch;
+  calls: MockCall[];
+} {
+  const calls: MockCall[] = [];
+  const fn = (async (url: any, init: any) => {
+    calls.push({ url: String(url), init });
+    return handler(String(url), init);
+  }) as unknown as typeof fetch;
+  return { fn, calls };
+}
 
-describe("Client constructor", () => {
-  it("throws if a required option is missing", () => {
-    expect(() => new Client({ ...baseOpts, baseURL: "" })).toThrow(/baseURL/);
-    expect(() => new Client({ ...baseOpts, workspaceSlug: "" })).toThrow(/workspaceSlug/);
-    expect(() => new Client({ ...baseOpts, appId: "" })).toThrow(/appId/);
-    expect(() => new Client({ ...baseOpts, apiKey: "" })).toThrow(/apiKey/);
-  });
+const json = (status: number, body: unknown) =>
+  new Response(JSON.stringify(body), { status, headers: { "Content-Type": "application/json" } });
 
-  it("strips trailing slashes from baseURL", async () => {
-    const fetchMock = mockFetch([{ body: { workspaceId: "ws", projectId: "p", appId: "app_123", updatedAt: "x", config: { public: [], private: [], secrets: [] }, flags: { client: [], server: [] } } }]);
-    const client = new Client({ ...baseOpts, baseURL: "https://app.manyrows.com///", fetch: fetchMock });
-    await client.getDelivery();
-    const callArg = (fetchMock as any).mock.calls[0][0] as string;
-    expect(callArg).toBe("https://app.manyrows.com/x/acme/api/apps/app_123/");
-    expect(callArg).not.toContain(".com//");
-  });
+const opts = (fetchFn: typeof fetch): ConstructorParameters<typeof ManyRowsServer>[0] => ({
+  baseUrl: "https://auth.example.com/", // trailing slash should be trimmed
+  workspace: "acme",
+  appId: "app-1",
+  apiKey: "mr_abc_secret",
+  fetch: fetchFn,
 });
 
-describe("getDelivery", () => {
-  it("returns the parsed delivery body", async () => {
-    const fetchMock = mockFetch([
-      {
-        body: {
-          workspaceId: "ws_1",
-          projectId: "p_1",
-          appId: "app_123",
-          updatedAt: "2026-01-15T10:30:00Z",
-          config: { public: [{ key: "theme", type: "string", value: "dark" }], private: [], secrets: [] },
-          flags: { client: [], server: [{ key: "beta", enabled: true }] },
-        },
-      },
-    ]);
-    const client = new Client({ ...baseOpts, fetch: fetchMock });
-    const d = await client.getDelivery();
-    expect(d.workspaceId).toBe("ws_1");
-    expect(d.config.public[0]).toEqual({ key: "theme", type: "string", value: "dark" });
-    expect(d.flags.server[0]?.enabled).toBe(true);
+describe("ManyRowsServer", () => {
+  it("checkPermission builds the URL, query, and auth header", async () => {
+    const m = mockFetch(() => json(200, { allowed: true, permission: "posts:read", accountId: "u1" }));
+    const mr = new ManyRowsServer(opts(m.fn));
+
+    const res = await mr.checkPermission("u1", "posts:read");
+    expect(res.allowed).toBe(true);
+
+    const { url, init } = m.calls[0]!;
+    expect(init.method).toBe("GET");
+    expect((init.headers as Record<string, string>)["X-API-Key"]).toBe("mr_abc_secret");
+    expect(url).toMatch(/^https:\/\/auth\.example\.com\/x\/acme\/api\/v1\/apps\/app-1\/check-permission\?/);
+    expect(url).toMatch(/accountId=u1/);
+    expect(url).toMatch(/permission=posts%3Aread/);
   });
 
-  it("sends X-API-Key and User-Agent headers", async () => {
-    const fetchMock = mockFetch([{ body: { workspaceId: "ws", projectId: "p", appId: "app_123", updatedAt: "", config: { public: [], private: [], secrets: [] }, flags: { client: [], server: [] } } }]);
-    const client = new Client({ ...baseOpts, fetch: fetchMock });
-    await client.getDelivery();
-    const init = (fetchMock as any).mock.calls[0][1] as RequestInit;
-    const headers = init.headers as Record<string, string>;
-    expect(headers["X-API-Key"]).toBe("mr_test_key");
-    expect(headers["User-Agent"]).toMatch(/^manyrows-node\//);
-  });
-});
+  it("createUser sends a JSON body and parses the result", async () => {
+    const m = mockFetch(() => json(201, { user: { id: "u2", email: "a@b.com" }, created: true, roles: ["editor"] }));
+    const mr = new ManyRowsServer(opts(m.fn));
 
-describe("error handling", () => {
-  it("throws ManyRowsError with status + body on non-2xx", async () => {
-    const fetchMock = mockFetch([{ status: 401, body: "invalid api key" }]);
-    const client = new Client({ ...baseOpts, fetch: fetchMock });
-    await expect(client.getDelivery()).rejects.toThrow(ManyRowsError);
-    try {
-      await client.getDelivery();
-    } catch (err) {
-      expect(err).toBeInstanceOf(ManyRowsError);
-      const e = err as ManyRowsError;
-      expect(e.status).toBe(401);
-      expect(e.body).toBe("invalid api key");
-    }
+    const res = await mr.createUser({ email: "a@b.com", roles: ["editor"] });
+    expect(res.created).toBe(true);
+    expect(res.user.id).toBe("u2");
+
+    const { init } = m.calls[0]!;
+    expect(init.method).toBe("POST");
+    expect((init.headers as Record<string, string>)["Content-Type"]).toBe("application/json");
+    expect(JSON.parse(init.body as string)).toEqual({ email: "a@b.com", roles: ["editor"] });
   });
 
-  it("wraps network errors into ManyRowsError", async () => {
-    const fetchMock = mockFetch([{ error: new Error("ECONNREFUSED") }]);
-    const client = new Client({ ...baseOpts, fetch: fetchMock });
-    await expect(client.getDelivery()).rejects.toThrow(/ECONNREFUSED/);
-  });
-});
+  it("non-2xx throws ManyRowsServerError carrying status and code", async () => {
+    const m = mockFetch(() => json(404, { error: "error.notFound", message: "Not found" }));
+    const mr = new ManyRowsServer(opts(m.fn));
 
-describe("checkPermission / hasPermission", () => {
-  it("encodes accountId and permission in query params", async () => {
-    const fetchMock = mockFetch([{ body: { allowed: true, permission: "posts:edit", accountId: "u_1" } }]);
-    const client = new Client({ ...baseOpts, fetch: fetchMock });
-    const r = await client.checkPermission("u_1", "posts:edit");
-    expect(r.allowed).toBe(true);
-    const url = (fetchMock as any).mock.calls[0][0] as string;
-    expect(url).toContain("/check-permission?");
-    expect(url).toContain("accountId=u_1");
-    expect(url).toMatch(/permission=posts(%3A|:)edit/);
+    await expect(mr.getUser("missing")).rejects.toMatchObject({
+      name: "ManyRowsServerError",
+      status: 404,
+      code: "error.notFound",
+      message: "Not found",
+    });
+    await expect(mr.getUser("missing")).rejects.toBeInstanceOf(ManyRowsServerError);
   });
 
-  it("hasPermission returns just the boolean", async () => {
-    const fetchMock = mockFetch([{ body: { allowed: false, permission: "x", accountId: "u_1" } }]);
-    const client = new Client({ ...baseOpts, fetch: fetchMock });
-    expect(await client.hasPermission("u_1", "x")).toBe(false);
-  });
-});
+  it("deleteUserFieldValue handles a 204 with no body", async () => {
+    const m = mockFetch(() => new Response(null, { status: 204 }));
+    const mr = new ManyRowsServer(opts(m.fn));
 
-describe("listMembers", () => {
-  it("defaults page=0, pageSize=50", async () => {
-    const fetchMock = mockFetch([{ body: { members: [], total: 0, page: 0, pageSize: 50 } }]);
-    const client = new Client({ ...baseOpts, fetch: fetchMock });
-    await client.listMembers();
-    const url = (fetchMock as any).mock.calls[0][0] as string;
-    expect(url).toContain("page=0");
-    expect(url).toContain("pageSize=50");
-    expect(url).not.toContain("email=");
+    const res = await mr.deleteUserFieldValue("f1", "u1");
+    expect(res).toBeUndefined();
+    expect(m.calls[0]!.init.method).toBe("DELETE");
+    expect(m.calls[0]!.url).toMatch(/\/user-fields\/f1\/users\/u1$/);
   });
 
-  it("passes provided page/pageSize/email", async () => {
-    const fetchMock = mockFetch([{ body: { members: [], total: 0, page: 2, pageSize: 100 } }]);
-    const client = new Client({ ...baseOpts, fetch: fetchMock });
-    await client.listMembers({ page: 2, pageSize: 100, email: "alice@example.com" });
-    const url = (fetchMock as any).mock.calls[0][0] as string;
-    expect(url).toContain("page=2");
-    expect(url).toContain("pageSize=100");
-    expect(url).toContain("email=alice%40example.com");
+  it("listUsers omits undefined query params", async () => {
+    const m = mockFetch(() => json(200, { members: [], total: 0, page: 0, pageSize: 50 }));
+    const mr = new ManyRowsServer(opts(m.fn));
+
+    await mr.listUsers({ search: "ali" });
+    expect(m.calls[0]!.url).toMatch(/\/users\?search=ali$/);
   });
 
-  it("listMembersByEmail forwards through listMembers", async () => {
-    const fetchMock = mockFetch([{ body: { members: [], total: 0, page: 0, pageSize: 50 } }]);
-    const client = new Client({ ...baseOpts, fetch: fetchMock });
-    await client.listMembersByEmail("bob");
-    const url = (fetchMock as any).mock.calls[0][0] as string;
-    expect(url).toContain("email=bob");
-  });
-});
-
-describe("getUser / getUserByEmail", () => {
-  it("getUser hits /users?id=", async () => {
-    const fetchMock = mockFetch([{ body: { user: { id: "u_1", email: "a@b.com", enabled: true, source: "registered" }, roles: [], permissions: [], fields: [] } }]);
-    const client = new Client({ ...baseOpts, fetch: fetchMock });
-    const r = await client.getUser("u_1");
-    expect(r.user.id).toBe("u_1");
-    const url = (fetchMock as any).mock.calls[0][0] as string;
-    expect(url).toContain("/users?id=u_1");
-  });
-
-  it("getUserByEmail hits /users?email=", async () => {
-    const fetchMock = mockFetch([{ body: { user: { id: "u_1", email: "a@b.com", enabled: true, source: "registered" }, roles: [], permissions: [], fields: [] } }]);
-    const client = new Client({ ...baseOpts, fetch: fetchMock });
-    await client.getUserByEmail("a@b.com");
-    const url = (fetchMock as any).mock.calls[0][0] as string;
-    expect(url).toContain("/users?email=a%40b.com");
-  });
-});
-
-describe("listUserFields", () => {
-  it("returns the userFields array", async () => {
-    const fetchMock = mockFetch([{
-      body: {
-        userFields: [
-          { id: "f_1", key: "name", valueType: "string", label: "Name", status: "active" },
-          { id: "f_2", key: "verified", valueType: "bool", status: "active" },
-        ],
-      },
-    }]);
-    const client = new Client({ ...baseOpts, fetch: fetchMock });
-    const fields = await client.listUserFields();
-    expect(fields).toHaveLength(2);
-    expect(fields[0]?.key).toBe("name");
-  });
-
-  it("returns [] when userFields is missing", async () => {
-    const fetchMock = mockFetch([{ body: {} }]);
-    const client = new Client({ ...baseOpts, fetch: fetchMock });
-    expect(await client.listUserFields()).toEqual([]);
+  it("constructor validates required options", () => {
+    expect(() => new ManyRowsServer({ baseUrl: "", workspace: "a", appId: "b", apiKey: "c" })).toThrow();
+    expect(() => new ManyRowsServer({ baseUrl: "x", workspace: "a", appId: "b", apiKey: "" })).toThrow();
   });
 });

@@ -2,7 +2,7 @@
 //
 // Usage:
 //
-//   import { Client, decryptSecret } from "@manyrows/manyrows-node";
+//   import { ManyRowsServer, decryptSecret } from "@manyrows/manyrows-node";
 //
 //   const privateKeyJwk = JSON.parse(process.env.MANYROWS_WORKSPACE_PRIVATE_KEY!);
 //   const delivery = await client.getDelivery();
