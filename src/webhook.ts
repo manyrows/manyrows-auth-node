@@ -3,7 +3,7 @@
 //
 // Usage:
 //
-//   import { verifyWebhook, WebhookError } from "@manyrows/manyrows-node";
+//   import { verifyWebhook, WebhookError } from "@manyrows/manyrows-auth-node";
 //
 //   app.post("/webhooks/manyrows", express.raw({ type: "application/json" }), (req, res) => {
 //     try {

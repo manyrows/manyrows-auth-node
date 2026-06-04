@@ -1,4 +1,4 @@
-# @manyrows/manyrows-node
+# @manyrows/manyrows-auth-node
 
 Official Node.js SDK for [ManyRows](https://manyrows.com). Mirrors the surface of [`manyrows-go`](https://github.com/manyrows/manyrows-go).
 
@@ -13,21 +13,21 @@ This SDK is **not yet on npm**. Clone, build, and install the
 tarball into your project:
 
 ```bash
-git clone https://github.com/manyrows/manyrows-node.git
-cd manyrows-node
+git clone https://github.com/manyrows/manyrows-auth-node.git
+cd manyrows-auth-node
 npm install
 npm run build
 npm pack
-# → manyrows-manyrows-node-1.0.0.tgz
+# → manyrows-manyrows-auth-node-1.0.0.tgz
 ```
 
 Then from your application:
 
 ```bash
-npm install /path/to/manyrows-manyrows-node-1.0.0.tgz
+npm install /path/to/manyrows-manyrows-auth-node-1.0.0.tgz
 ```
 
-(`dist/` is not committed, so `npm install github:manyrows/manyrows-node`
+(`dist/` is not committed, so `npm install github:manyrows/manyrows-auth-node`
 would skip the build and leave no entry point — go through `npm pack`.)
 
 Requires **Node 18+** (uses the global `fetch`). TypeScript types are bundled.
@@ -37,7 +37,7 @@ Requires **Node 18+** (uses the global `fetch`). TypeScript types are bundled.
 The client wraps the ManyRows Server API. Requires an API key.
 
 ```ts
-import { Client } from "@manyrows/manyrows-node";
+import { Client } from "@manyrows/manyrows-auth-node";
 
 const client = new Client({
   baseURL: "https://manyrows.example.com",
@@ -62,7 +62,7 @@ your workspace private key (downloaded once when you generated the
 workspace key in your install's admin UI):
 
 ```ts
-import { Client, decryptSecret, type PrivateKeyJwk } from "@manyrows/manyrows-node";
+import { Client, decryptSecret, type PrivateKeyJwk } from "@manyrows/manyrows-auth-node";
 
 const privateKeyJwk: PrivateKeyJwk = JSON.parse(process.env.MANYROWS_WORKSPACE_PRIVATE_KEY!);
 const delivery = await client.getDelivery();
@@ -126,7 +126,7 @@ const fields = await client.listUserFields();
 Non-2xx responses throw `ManyRowsError`:
 
 ```ts
-import { ManyRowsError } from "@manyrows/manyrows-node";
+import { ManyRowsError } from "@manyrows/manyrows-auth-node";
 
 try {
   await client.getUser("bogus");
@@ -147,7 +147,7 @@ Built on [`jose`](https://github.com/panva/jose) — the de-facto Node JWT libra
 
 ```ts
 import express from "express";
-import { expressMiddleware, type AuthenticatedRequest } from "@manyrows/manyrows-node";
+import { expressMiddleware, type AuthenticatedRequest } from "@manyrows/manyrows-auth-node";
 
 const app = express();
 
@@ -184,7 +184,7 @@ declare global {
 Use the lower-level `verifyToken` and the two header-extraction helpers. `verifyToken` returns the user ID (`sub`) on success, `null` for any verification failure (expired, malformed, wrong signature, missing `sub`):
 
 ```ts
-import { verifyToken, bearerToken, mrAtCookie } from "@manyrows/manyrows-node";
+import { verifyToken, bearerToken, mrAtCookie } from "@manyrows/manyrows-auth-node";
 
 // Hono example — supports both Bearer and mr_at cookie:
 app.use("*", async (c, next) => {
@@ -208,7 +208,7 @@ app.use("*", async (c, next) => {
 
 ```ts
 import express from "express";
-import { Client, expressMiddleware, type AuthenticatedRequest } from "@manyrows/manyrows-node";
+import { Client, expressMiddleware, type AuthenticatedRequest } from "@manyrows/manyrows-auth-node";
 
 const client = new Client({
   baseURL: "https://manyrows.example.com",
@@ -251,7 +251,7 @@ app.listen(3000);
 Pass a `fetch` override into either `Client` or `verifyToken` for testing, request tracing, or undici dispatcher injection:
 
 ```ts
-import { Client } from "@manyrows/manyrows-node";
+import { Client } from "@manyrows/manyrows-auth-node";
 
 const client = new Client({
   // ...
@@ -269,7 +269,7 @@ on your receiver:
 
 ```ts
 import express from "express";
-import { verifyWebhook, WebhookError } from "@manyrows/manyrows-node";
+import { verifyWebhook, WebhookError } from "@manyrows/manyrows-auth-node";
 
 app.post(
   "/webhooks/manyrows",

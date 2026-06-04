@@ -4,7 +4,7 @@
 // Authenticate with a workspace API key; every call is scoped to one app.
 //
 // ```ts
-// import { ManyRowsServer } from "@manyrows/manyrows-node";
+// import { ManyRowsServer } from "@manyrows/manyrows-auth-node";
 //
 // const mr = new ManyRowsServer({
 //   baseUrl: "https://auth.example.com",

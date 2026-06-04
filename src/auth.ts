@@ -9,7 +9,7 @@
 
 import { createRemoteJWKSet, customFetch, jwtVerify, type JWTVerifyGetKey } from "jose";
 
-const USER_AGENT = "manyrows-node-auth/1.0";
+const USER_AGENT = "manyrows-auth-node/1.0";
 
 // jwksCacheMaxAgeMs aligns the SDK's JWKS cache lifetime with the
 // other-language SDKs (manyrows-go / manyrows-python / manyrows-java)
@@ -27,7 +27,7 @@ const jwksCacheMaxAgeMs = 10 * 60 * 1000;
  */
 function requireSecureBaseURL(raw: string): void {
   const s = raw.trim().toLowerCase();
-  if (!s) throw new Error("manyrows-node auth: baseURL is empty");
+  if (!s) throw new Error("manyrows-auth-node: baseURL is empty");
   if (s.startsWith("https://")) return;
   if (
     s.startsWith("http://localhost") ||
@@ -35,7 +35,7 @@ function requireSecureBaseURL(raw: string): void {
     s.startsWith("http://[::1]")
   ) return;
   throw new Error(
-    `manyrows-node auth: baseURL must use https:// (got ${JSON.stringify(raw)}) — refusing to fetch JWKS over plaintext`,
+    `manyrows-auth-node: baseURL must use https:// (got ${JSON.stringify(raw)}) — refusing to fetch JWKS over plaintext`,
   );
 }
 

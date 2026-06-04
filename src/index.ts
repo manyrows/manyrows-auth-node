@@ -1,4 +1,4 @@
-// Public surface of @manyrows/manyrows-node.
+// Public surface of @manyrows/manyrows-auth-node.
 
 export { ManyRowsServer, ManyRowsServerError } from "./client.js";
 export type {
