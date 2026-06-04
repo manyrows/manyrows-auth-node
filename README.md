@@ -1,6 +1,6 @@
 # @manyrows/manyrows-auth-node
 
-Official Node.js SDK for [ManyRows](https://manyrows.com). Mirrors the surface of [`manyrows-go`](https://github.com/manyrows/manyrows-go).
+Official Node.js SDK for [ManyRows](https://manyrows.com). Mirrors the surface of [`manyrows-auth-go`](https://github.com/manyrows/manyrows-auth-go).
 
 The examples below assume a self-hosted deployment at
 `https://manyrows.example.com`. Swap in whatever host your install
