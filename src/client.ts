@@ -15,6 +15,16 @@
 // const { allowed } = await mr.checkPermission(userId, "posts:read");
 // ```
 
+/**
+ * SDK version, sent as the User-Agent on every request so the server (and any
+ * proxy/WAF in front of it) can identify the client rather than treating it as
+ * an anonymous bot. Keep in sync with package.json.
+ */
+export const VERSION = "1.0.0";
+
+/** Sent on every request. */
+const USER_AGENT = `manyrows-auth-node/${VERSION}`;
+
 export interface ManyRowsServerOptions {
   /** Base URL of your ManyRows host, e.g. `https://auth.example.com`. */
   baseUrl: string;
@@ -278,6 +288,72 @@ export interface Delivery {
   };
 }
 
+/** An app-scoped tenant. */
+export interface Organization {
+  id: string;
+  appId: string;
+  name: string;
+  slug: string;
+  status: string;
+  createdAt: string;
+}
+
+/** One of a user's organizations + their tier (`listOrganizationsForUser`). */
+export interface OrgMembership {
+  id: string;
+  name: string;
+  slug: string;
+  orgRole: string;
+}
+
+/**
+ * A member of an organization. `email` is populated by the member list/add
+ * responses; the lightweight membership gate omits it.
+ */
+export interface OrgMember {
+  userId: string;
+  email?: string;
+  orgRole: string;
+  status: string;
+}
+
+/** A pending organization invitation. */
+export interface OrgInvite {
+  id: string;
+  email: string;
+  orgRole: string;
+  status: string;
+  invitedByEmail?: string;
+  createdAt: string;
+  expiresAt: string;
+}
+
+export interface CreateOrganizationInput {
+  name: string;
+  ownerUserId: string;
+  slug?: string;
+}
+
+export interface UpdateOrganizationInput {
+  name?: string;
+  slug?: string;
+}
+
+export interface AddOrgMemberInput {
+  /** Identify the member by id… */
+  userId?: string;
+  /** …or by email (the user must already be signed in to the app). */
+  email?: string;
+  orgRole: string;
+}
+
+export interface CreateOrgInviteInput {
+  email: string;
+  orgRole?: string;
+  roleIds?: string[];
+  invitedByUserId?: string;
+}
+
 /** Thrown on any non-2xx response; carries the API's `{ error, message }`. */
 export class ManyRowsServerError extends Error {
   readonly status: number;
@@ -288,6 +364,21 @@ export class ManyRowsServerError extends Error {
     this.status = status;
     this.code = code;
   }
+}
+
+/** Stable API error codes (the `code` of a {@link ManyRowsServerError}) for the org endpoints. */
+export const ErrorCodes = {
+  userNotSignedIn: "error.userNotSignedIn",
+  invitePending: "error.invitePending",
+  conflict: "error.conflict",
+  notFound: "error.notFound",
+} as const;
+
+export type ErrorCode = (typeof ErrorCodes)[keyof typeof ErrorCodes];
+
+/** Whether `err` is a {@link ManyRowsServerError} carrying the given API code. */
+export function isCode(err: unknown, code: string): boolean {
+  return err instanceof ManyRowsServerError && err.code === code;
 }
 
 type Query = Record<string, string | number | boolean | undefined>;
@@ -328,6 +419,12 @@ export class ManyRowsServer {
   /** Whether a member has a permission in this app. */
   checkPermission(userId: string, permission: string): Promise<CheckPermissionResult> {
     return this.request("GET", "/check-permission", { query: { accountId: userId, permission } });
+  }
+
+  /** Whether a member has a permission in this app, as a bare boolean. */
+  async hasPermission(userId: string, permission: string): Promise<boolean> {
+    const { allowed } = await this.checkPermission(userId, permission);
+    return allowed;
   }
 
   /** The product's roles, each with the permission slugs it grants. */
@@ -774,6 +871,125 @@ export class ManyRowsServer {
     );
   }
 
+  // ---- Organizations ----
+
+  /** Create an organization owned by `ownerUserId`. */
+  createOrganization(input: CreateOrganizationInput): Promise<Organization> {
+    return this.request("POST", "/organizations", {
+      body: { name: input.name, ownerUserId: input.ownerUserId, slug: input.slug },
+    });
+  }
+
+  /** The organizations a user belongs to, with their tier in each. */
+  async listOrganizationsForUser(userId: string): Promise<OrgMembership[]> {
+    const { organizations } = await this.request<{ organizations: OrgMembership[] }>(
+      "GET",
+      "/organizations",
+      { query: { userId } },
+    );
+    return organizations;
+  }
+
+  /** Fetch one organization by id. */
+  getOrganization(orgId: string): Promise<Organization> {
+    return this.request("GET", `/organizations/${encodeURIComponent(orgId)}`);
+  }
+
+  /** Update an organization's name and/or slug (omit a field to leave it unchanged). */
+  updateOrganization(orgId: string, patch: UpdateOrganizationInput): Promise<Organization> {
+    return this.request("PATCH", `/organizations/${encodeURIComponent(orgId)}`, {
+      body: { name: patch.name, slug: patch.slug },
+    });
+  }
+
+  /**
+   * Hard-delete an org. The auth server enforces owner-only deletion:
+   * `actorUserId` names the acting end-user, who must be an active owner of
+   * the org, or the call is rejected (400 if empty, 403 if not an owner).
+   */
+  deleteOrganization(orgId: string, actorUserId: string): Promise<void> {
+    return this.request("DELETE", `/organizations/${encodeURIComponent(orgId)}`, {
+      query: { actorUserId },
+      expectNoContent: true,
+    });
+  }
+
+  // ---- Organization members ----
+
+  /** List an organization's members. */
+  async listOrganizationMembers(orgId: string): Promise<OrgMember[]> {
+    const { members } = await this.request<{ members: OrgMember[] }>(
+      "GET",
+      `/organizations/${encodeURIComponent(orgId)}/members`,
+    );
+    return members;
+  }
+
+  /** Fetch one organization member by user id. */
+  getOrganizationMember(orgId: string, userId: string): Promise<OrgMember> {
+    return this.request(
+      "GET",
+      `/organizations/${encodeURIComponent(orgId)}/members/${encodeURIComponent(userId)}`,
+    );
+  }
+
+  /** Add a member to an organization, identified by `userId` or `email`. */
+  addOrganizationMember(orgId: string, input: AddOrgMemberInput): Promise<OrgMember> {
+    return this.request("POST", `/organizations/${encodeURIComponent(orgId)}/members`, {
+      body: { orgRole: input.orgRole, userId: input.userId, email: input.email },
+    });
+  }
+
+  /** Change a member's tier in an organization. */
+  setOrganizationMemberRole(orgId: string, userId: string, orgRole: string): Promise<void> {
+    return this.request(
+      "PATCH",
+      `/organizations/${encodeURIComponent(orgId)}/members/${encodeURIComponent(userId)}`,
+      { body: { orgRole }, expectNoContent: true },
+    );
+  }
+
+  /** Remove a member from an organization. */
+  removeOrganizationMember(orgId: string, userId: string): Promise<void> {
+    return this.request(
+      "DELETE",
+      `/organizations/${encodeURIComponent(orgId)}/members/${encodeURIComponent(userId)}`,
+      { expectNoContent: true },
+    );
+  }
+
+  // ---- Organization invites ----
+
+  /** Invite someone to an organization by email. */
+  createOrganizationInvite(orgId: string, input: CreateOrgInviteInput): Promise<OrgInvite> {
+    return this.request("POST", `/organizations/${encodeURIComponent(orgId)}/invites`, {
+      body: {
+        email: input.email,
+        orgRole: input.orgRole,
+        roleIds: input.roleIds,
+        invitedByUserId: input.invitedByUserId,
+      },
+    });
+  }
+
+  /** List an organization's pending invites. */
+  async listOrganizationInvites(orgId: string): Promise<OrgInvite[]> {
+    const { invites } = await this.request<{ invites: OrgInvite[] }>(
+      "GET",
+      `/organizations/${encodeURIComponent(orgId)}/invites`,
+    );
+    return invites;
+  }
+
+  /** Revoke a pending organization invite. */
+  revokeOrganizationInvite(orgId: string, inviteId: string): Promise<void> {
+    return this.request(
+      "DELETE",
+      `/organizations/${encodeURIComponent(orgId)}/invites/${encodeURIComponent(inviteId)}`,
+      { expectNoContent: true },
+    );
+  }
+
   // ---- internal ----
 
   private async request<T>(
@@ -794,6 +1010,7 @@ export class ManyRowsServer {
     const headers: Record<string, string> = {
       "X-API-Key": this.apiKey,
       Accept: "application/json",
+      "User-Agent": USER_AGENT,
     };
     let body: string | undefined;
     if (opts.body !== undefined) {

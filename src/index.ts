@@ -1,6 +1,6 @@
 // Public surface of @manyrows/manyrows-auth-node.
 
-export { ManyRowsServer, ManyRowsServerError } from "./client.js";
+export { ManyRowsServer, ManyRowsServerError, VERSION, ErrorCodes, isCode } from "./client.js";
 export type {
   ManyRowsServerOptions,
   UserSource,
@@ -32,6 +32,15 @@ export type {
   DeliveryConfigItem,
   DeliveryFlagItem,
   Delivery,
+  ErrorCode,
+  Organization,
+  OrgMembership,
+  OrgMember,
+  OrgInvite,
+  CreateOrganizationInput,
+  UpdateOrganizationInput,
+  AddOrgMemberInput,
+  CreateOrgInviteInput,
 } from "./client.js";
 
 export { verifyToken, bearerToken, mrAtCookie, expressMiddleware } from "./auth.js";
